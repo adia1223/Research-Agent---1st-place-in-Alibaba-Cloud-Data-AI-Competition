@@ -14,17 +14,34 @@ from tools_search import batch_search
 from tools_visit import visit_pages
 
 
+SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY", "")
+# Backward compatibility: old env var name used by DashScope version.
 DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
-AGENT_MODEL = os.getenv("AGENT_MODEL", "qwen3.5-plus")
+
+AGENT_MODEL = os.getenv("AGENT_MODEL", "Qwen/Qwen3.5-4B")
 MAX_ROUNDS = 100
 TIMEOUT_SECONDS = 540  # 9 minutes (leave 1 min buffer for 10 min limit)
 MAX_TOKENS_ESTIMATE = 500000  # Upgraded from 80K - qwen-plus supports 128K, leave buffer
 MAX_TOOL_RESULT_CHARS = 15000  # Max chars per tool result to keep context manageable
 
-_client = AsyncOpenAI(
-    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-    api_key=DASHSCOPE_API_KEY,
+# Provider selection (OpenAI-compatible):
+# - Prefer explicit OPENAI_API_KEY / OPENAI_BASE_URL if set
+# - Otherwise default to SiliconFlow if SILICONFLOW_API_KEY is provided
+# - Fallback to DashScope compatible-mode for older setups
+OPENAI_API_KEY = (
+    os.getenv("OPENAI_API_KEY", "").strip()
+    or SILICONFLOW_API_KEY.strip()
+    or DASHSCOPE_API_KEY.strip()
 )
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "").strip()
+if not OPENAI_BASE_URL:
+    OPENAI_BASE_URL = (
+        "https://api.siliconflow.cn/v1" if SILICONFLOW_API_KEY.strip()
+        else "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    )
+
+_client = AsyncOpenAI(base_url=OPENAI_BASE_URL, api_key=OPENAI_API_KEY)
+print(f"[agent_loop] Using OpenAI-compatible base_url: {OPENAI_BASE_URL}")
 
 # Initialize tiktoken encoder for accurate token counting
 try:

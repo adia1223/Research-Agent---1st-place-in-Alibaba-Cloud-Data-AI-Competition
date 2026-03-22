@@ -1,0 +1,61 @@
+# --- Python bytecode / caches ---
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# --- Virtual environments ---
+.venv/
+venv/
+ENV/
+env/
+
+# --- Packaging / build artifacts ---
+build/
+dist/
+*.egg-info/
+*.egg
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Logs / temp files ---
+*.log
+*.tmp
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- IDEs / editors ---
+.vscode/
+.idea/
+
+# --- Environment / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Common local outputs ---
+outputs/
+output/
+runs/
+wandb/
+logs/
+
+# --- Data / models (adjust if you DO want to version them) ---
+data/
+datasets/
+checkpoints/
+models/
+*.ckpt
+*.pth
+*.pt
+

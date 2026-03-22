@@ -5,6 +5,7 @@ import urllib.parse
 from typing import List
 
 import httpx
+from bs4 import BeautifulSoup
 
 
 IQS_API_KEY = os.getenv("IQS_API_KEY", "")
@@ -42,8 +43,91 @@ def _simplify_query(query: str) -> str:
     return simplified if simplified != query else query
 
 
+def duckduckgo_search(query: str, retries: int = 3) -> str:
+    """
+    Keyless web search via DuckDuckGo HTML results.
+
+    NOTE: This is intentionally used as the default in this repo to avoid
+    relying on any Aliyun IQS billing.
+    """
+    # Use the html subdomain directly and follow redirects to avoid
+    # repeatedly getting stuck on HTTP 302 responses.
+    base_url = "https://html.duckduckgo.com/html/"
+    params = {"q": query}
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
+    }
+
+    for attempt in range(retries):
+        try:
+            resp = httpx.get(
+                base_url,
+                params=params,
+                headers=headers,
+                timeout=IQS_TIMEOUT,
+                follow_redirects=True,
+            )
+            if resp.status_code != 200:
+                location = resp.headers.get("location", "")
+                redirect_info = f" -> {location}" if location else ""
+                print(
+                    f"[search] DuckDuckGo HTTP {resp.status_code}{redirect_info}: {resp.text[:200]}"
+                )
+                continue
+
+            lower_text = resp.text.lower()
+            if any(flag in lower_text for flag in ("captcha", "human", "challenge")):
+                print("[search] DuckDuckGo returned anti-bot/challenge page")
+                continue
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+            results = []
+            for idx, result in enumerate(soup.select("div.result"), 1):
+                link_tag = result.select_one("a.result__a")
+                snippet_tag = result.select_one("a.result__snippet") or result.select_one("div.result__snippet")
+                if not link_tag:
+                    continue
+                title = link_tag.get_text(strip=True) or "Untitled"
+                href = link_tag.get("href", "")
+                snippet = snippet_tag.get_text(" ", strip=True) if snippet_tag else ""
+
+                entry = f"{idx}. [{title}]({href})"
+                if snippet:
+                    entry += f"\n{snippet}"
+                results.append(entry)
+
+            if not results:
+                return f"No results found for '{query}'. Try with a more general query."
+
+            content = (
+                f"A search for '{query}' found {len(results)} results (DuckDuckGo HTML):\n\n"
+                f"## Web Results\n"
+                + "\n\n".join(results)
+            )
+            return content
+        except Exception as e:
+            print(f"[search] DuckDuckGo attempt {attempt + 1} failed: {e}")
+
+    return f"Search failed for '{query}'. Please try a different query."
+
+
 def iqs_search(query: str, retries: int = 3) -> str:
-    """Single query using IQS GenericSearch API, returns formatted results."""
+    """
+    Single query using IQS GenericSearch API.
+
+    This repo is configured to bypass IQS by default (to avoid Aliyun billing),
+    so this function currently delegates to DuckDuckGo.
+    """
+    return duckduckgo_search(query, retries=retries)
+
+
+def _iqs_search_aliyun(query: str, retries: int = 3) -> str:
+    """(Legacy) Single query using IQS GenericSearch API, returns formatted results."""
     headers = {"X-API-Key": IQS_API_KEY}
     params = {
         "query": query,
@@ -162,43 +246,20 @@ def batch_search(queries: List[str], engines: List[str] = None) -> str:
 
     results = []
     for q, engine in zip(queries, engines):
-        # Determine primary engine: LLM choice > auto-detect by language
-        if engine == "google":
-            use_google = True
-        elif engine == "bing":
-            use_google = False
-        else:
-            # Auto-detect: Chinese -> bing/IQS, English -> google/Serper
-            use_google = not _contains_chinese(q)
-
-        engine_name = 'Google/Serper' if use_google else 'Bing/IQS'
+        # Bypass any paid/search-key engines: always use DuckDuckGo HTML.
         source = f'LLM:{engine}' if engine else 'auto'
-        print(f'[search] Query: "{q[:60]}" -> {engine_name} ({source})')
-        if use_google:
-            result = serper_search(q)
-        else:
-            result = iqs_search(q)
+        print(f'[search] Query: "{q[:60]}" -> DuckDuckGo ({source})')
+        result = duckduckgo_search(q)
 
         # Check if results are poor (empty or very short)
         if _is_poor_result(result):
-            # Try cross-engine fallback
-            if use_google:
-                print(f"[search] Poor Google results for '{q}', trying Bing/IQS fallback")
-                fallback = iqs_search(q)
-            else:
-                print(f"[search] Poor Bing/IQS results for '{q}', trying Google fallback")
-                fallback = serper_search(q)
-
-            if not _is_poor_result(fallback):
-                result = fallback
-            else:
-                # Both engines failed, try simplified query
-                simplified = _simplify_query(q)
-                if simplified != q:
-                    print(f"[search] Both engines poor for '{q}', retrying simplified: '{simplified}'")
-                    retry_result = serper_search(simplified) if use_google else iqs_search(simplified)
-                    if not _is_poor_result(retry_result):
-                        result = retry_result
+            # Retry simplified query
+            simplified = _simplify_query(q)
+            if simplified != q:
+                print(f"[search] Poor results for '{q}', retrying simplified: '{simplified}'")
+                retry_result = duckduckgo_search(simplified)
+                if not _is_poor_result(retry_result):
+                    result = retry_result
 
         results.append(result)
 
